@@ -4,14 +4,22 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.junit.jupiter.api.Assertions.*;
 import java.util.List;
 import java.util.Map;
+import java.util.stream.Stream;
 import java.math.BigDecimal;
 import java.util.Collections;
 import java.util.LinkedList;
 import org.junit.jupiter.api.Disabled;
+import org.junit.jupiter.api.Nested;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.Arguments;
+import static org.junit.jupiter.params.provider.Arguments.arguments;
+import static org.mockito.Mockito.doThrow;
+import org.junit.jupiter.params.provider.MethodSource;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.boot.test.context.SpringBootTest.WebEnvironment;
+import org.springframework.boot.test.mock.mockito.MockBean;
 import org.springframework.core.ParameterizedTypeReference;
 import org.springframework.http.HttpMethod;
 import org.springframework.http.HttpStatus;
@@ -21,23 +29,29 @@ import org.springframework.test.context.ActiveProfiles;
 import org.springframework.test.context.jdbc.Sql;
 import org.springframework.test.context.jdbc.SqlConfig;
 import org.springframework.test.jdbc.JdbcTestUtils;
+import com.promineotech.jeep.Constants;
 import com.promineotech.jeep.controller.support.FetchJeepTestSupport;
 import com.promineotech.jeep.entity.JeepModel;
+import com.promineotech.jeep.service.JeepSalesService;
 import com.promineotech.jeep.entity.Jeep;
 
-@SpringBootTest(webEnvironment = WebEnvironment.RANDOM_PORT)
-@ActiveProfiles("test")
 
-@Sql(scripts = {
+class FetchJeepTest {
+  @Nested
+  @SpringBootTest(webEnvironment = WebEnvironment.RANDOM_PORT)
+  @ActiveProfiles("test")
+
+  @Sql(scripts = {
         "classpath:flyway/migrations/V1.0__Jeep_Schema.sql",
         "classpath:flyway/migrations/V1.1__Jeep_Data.sql"}, 
       config = @SqlConfig(encoding = "utf-8"))
-
-class FetchJeepTest extends FetchJeepTestSupport{
+  
+  class TestsThatDoNotPolluteTheApplicationContext extends FetchJeepTestSupport{
+    
   @Autowired
   private JdbcTemplate jdbcTemplate;
   
-  @Disabled
+ 
   @Test
   void testDb() {
     // to read the number of rows in the table 
@@ -45,14 +59,36 @@ class FetchJeepTest extends FetchJeepTestSupport{
     System.out.println("number of rows =" + numrows);
   }
   
+  @ParameterizedTest
+  @MethodSource("com.promineotech.jeep.controller.FetchJeepTest#parametersForInvalidInput")
+  void testThatAnErrorMessageIsReturnedWhenAnInvalidValueIsSupplied(
+      String model, String trim, String Reason ) {
+    
+    String uri = 
+        String.format ("%s?model=%s&trim=%s", getBaseUriForJeeps(), model, trim);
+    
+    ResponseEntity<Map<String, Object>> response = 
+       getRestTemplate()
+       .exchange(uri, HttpMethod.GET, null, new ParameterizedTypeReference<>(){});
+    
+    //Then : a not found (404) status code is returned
+    assertThat(response.getStatusCode()).isEqualTo(HttpStatus.BAD_REQUEST);
+    
+    //And : an error message is returned
+    Map<String, Object> error = response.getBody();
+    
+    assertErrorMessageValid(error, HttpStatus.BAD_REQUEST);
+    
+  }
+  
   @Test
-  void testThatAnErrorMessageIsReturnedWhenAnInvalidTrimIsSupplied() {
+  void testThatAnErrorMessageIsReturnedWhenAnUnknownTrimIsSupplied() {
     
     //Given : a valid model, trim and URI
     JeepModel model = JeepModel.WRANGLER;
-    String trim = "Invalid Value";
+    String trim = "Unknown Value";
     String uri = 
-        String.format ("%s?model=%s&trim=%s", getBaseUri(), model, trim);
+        String.format ("%s?model=%s&trim=%s", getBaseUriForJeeps(), model, trim);
     //System.out.println(uri);
     //When :  a connection is made to the URI
      
@@ -72,17 +108,10 @@ class FetchJeepTest extends FetchJeepTestSupport{
     //And : an error message is returned
     Map<String, Object> error = response.getBody();
     
-    //formatter: off
-    assertThat(error)
-    .containsKey("message")
-    .containsEntry("status code", HttpStatus.NOT_FOUND.value())
-    .containsEntry("uri","/jeeps")
-    .containsKey("timestamp")
-    .containsEntry("reason", HttpStatus.NOT_FOUND.getReasonPhrase());
-    //formatter: on
+    assertErrorMessageValid(error, HttpStatus.NOT_FOUND);
     
   }
-  @Disabled
+ 
   @Test
   void testThatJeepsAreReturnedWhenAValidModelAndTrimAreSupplied() {
     
@@ -90,7 +119,7 @@ class FetchJeepTest extends FetchJeepTestSupport{
     JeepModel model = JeepModel.WRANGLER;
     String trim = "Sport";
     String uri = 
-        String.format ("%s?model=%s&trim=%s", getBaseUri(), model, trim);
+        String.format ("%s?model=%s&trim=%s", getBaseUriForJeeps(), model, trim);
     //System.out.println(uri);
     //When :  a connection is made to the URI
     ResponseEntity<List<Jeep>> response = 
@@ -107,28 +136,50 @@ class FetchJeepTest extends FetchJeepTestSupport{
     
     assertThat(actual).isEqualTo(expected);
   }
-
-  private List<Jeep> buildExpected() {
-    List<Jeep> list = new LinkedList<>();
-    
-    //@formatter : off
-    list.add(Jeep.builder()
-        .modelId(JeepModel.WRANGLER)
-        .trimLevel("Sport")
-        .numDoors(4)
-        .wheelSize(17)
-        .basePrice(new BigDecimal("31975.00"))
-        .build());
-    list.add(Jeep.builder()
-        .modelId(JeepModel.WRANGLER)
-        .trimLevel("Sport")
-        .numDoors(2)
-        .wheelSize(17)
-        .basePrice(new BigDecimal("28475.00"))
-        .build());
-  //@formatter : off
-    Collections.sort(list);
-    return list;
   }
+  static Stream<Arguments>parametersForInvalidInput(){
+    //@formatter: 0ff
+  return Stream.of(
+   arguments("WRANGLER", "@#$%@$%#", "Trim contains non-alpha-numeric chars"),
+   arguments("WRANGLER", "C".repeat(Constants.TRIM_MAX_LENGTH + 1), "Trim contains non-alpha-numeric chars"),
+   arguments("INVALID", "Sport", "Model is not enum value")
+        );
+    //@formatter: on
+  }
+  @Nested
+  @SpringBootTest(webEnvironment = WebEnvironment.RANDOM_PORT)
+  @ActiveProfiles("test")
 
+  @Sql(scripts = {
+        "classpath:flyway/migrations/V1.0__Jeep_Schema.sql",
+        "classpath:flyway/migrations/V1.1__Jeep_Data.sql"}, 
+      config = @SqlConfig(encoding = "utf-8"))
+  class TestsThatPolluteTheApplicationContext extends FetchJeepTestSupport{
+    @MockBean
+    private JeepSalesService jeepSalesService;
+    @Test
+    void testThatAnUnplannedErrorResultsInA500Statu() {
+      //When : a connection is made to the URI
+      JeepModel model = JeepModel.WRANGLER;
+      String trim = "Sport";
+      String uri = 
+          String.format ("%s?model=%s&trim=%s", getBaseUriForJeeps(), model, trim);
+       
+      doThrow (new RuntimeException("Ouch!")).when(jeepSalesService).
+       fetchJeeps(model, trim);
+      
+      ResponseEntity<Map<String, Object>> response = 
+         getRestTemplate()
+         .exchange(uri, HttpMethod.GET, null, new ParameterizedTypeReference<>(){});
+      
+   //Then : an internal server error (500) status is returned
+   assertThat(response.getStatusCode()).isEqualTo(HttpStatus.INTERNAL_SERVER_ERROR);
+      
+      //And : an error message is returned
+      Map<String, Object> error = response.getBody();
+      
+      assertErrorMessageValid(error, HttpStatus.INTERNAL_SERVER_ERROR);
+      
+    }
+  }
 }

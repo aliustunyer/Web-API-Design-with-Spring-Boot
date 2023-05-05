@@ -14,8 +14,11 @@ private int serverPort;
 @Getter
 private TestRestTemplate restTemplate;
 
-protected String getBaseUri() {
-  return String.format("http://localhost:%d/jeeps", serverPort);
-  
+protected String getBaseUriForJeeps() {
+  return String.format("http://localhost:%d/jeeps", serverPort); 
  }
+
+protected String getBaseUriForOrders() {
+  return String.format("http://localhost:%d/orders", serverPort);
+}  
 }
